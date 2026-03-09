@@ -23,7 +23,7 @@ Build output appears at `./result-triton-server/`.
 ```
 result-triton-server/
   bin/
-    tritonserver          # Main server binary (17 MB)
+    tritonserver          # Main server binary (18 MB)
     simple                # Example: single model
     multi_server          # Example: multiple server instances
     memory_alloc          # Example: custom memory allocation
@@ -35,14 +35,17 @@ result-triton-server/
     ...                   # + 5 more static libs
     stubs/libtritonserver.so
     cmake/TritonCore/     # CMake find_package support
-  include/triton/core/
-    tritonserver.h        # C API
-    tritonbackend.h       # Backend API
-    tritoncache.h         # Cache API
-    tritonrepoagent.h     # Repo agent API
+    cmake/TritonBackend/  # Backend development cmake modules
+    cmake/TritonCommon/   # Common utilities cmake modules
+  include/
+    *.pb.h                # 5 protobuf/gRPC service definitions
+    triton/core/          # 4 headers: C API, backend, cache, repo agent
+    triton/backend/       # 7 headers: backend development utilities
+    triton/common/        # 9 headers: shared utilities (logging, JSON, etc.)
   python/
     tritonserver-*.whl    # Python in-process API bindings
     tritonfrontend-*.whl  # Python HTTP/gRPC frontend bindings
+    tritonserver-*.tar.gz # Source tarball
 ```
 
 ## Usage
@@ -57,6 +60,19 @@ result-triton-server/
 
 # Check it works
 ./result-triton-server/bin/tritonserver --help
+```
+
+## Building Custom Backends
+
+The build output includes everything needed to develop custom Triton backends:
+- Headers in `include/triton/backend/` and `include/triton/common/`
+- CMake integration via `find_package(TritonBackend)` and `find_package(TritonCommon)`
+- Stub library at `lib/stubs/libtritonserver.so` for linking without the full runtime
+
+Point your backend's CMake at the build output:
+
+```bash
+cmake -DCMAKE_PREFIX_PATH=./result-triton-server/lib/cmake ...
 ```
 
 ## What's Included

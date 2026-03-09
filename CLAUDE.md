@@ -47,6 +47,16 @@ The backend repo's `define.cuda_architectures.cmake` defaults to `100f;120f` whi
 nvcc 12.8 doesn't support (CMake 4.x forward-compatibility syntax). We pin to
 80/86/89/90. Forward compat for newer GPUs (Blackwell) works via PTX JIT.
 
+Three separate architecture specifications are needed because different parts of the
+build read different sources:
+- `CUDA_ARCH_LIST="80 86 89 90"` (space-separated env var) - read by the backend repo's
+  `define.cuda_architectures.cmake`
+- `CUDAARCHS="80;86;89;90"` (semicolon-separated env var) - read by CMake's standard
+  CUDA architecture detection
+- `CMAKE_CUDA_ARCHITECTURES` injected via `set(... CACHE ...)` into
+  `server/src/CMakeLists.txt` - propagates into the ExternalProject sub-build, which
+  runs as a separate cmake process and doesn't inherit env vars or parent cmake vars
+
 ## Critical Nix Sandbox Challenges (and solutions)
 
 ### 1. No Network Access
@@ -84,6 +94,10 @@ every ExternalProject. Also `preFixup` merges any remaining lib64 into lib.
 different versions. Fix: `substituteInPlace` to loosen all pins. Also patched
 `"numpy<2"` to `"numpy"` (Nix has numpy 2.x).
 
+Note: `mypy` is listed in `pyproject.toml`'s `[build-system] requires` because it's
+used for stub generation during the wheel build. This is why `ps.mypy` is included in
+`buildPython` - without it, the `--no-isolation` build fails.
+
 ## Pre-Fetched Repos (12 total)
 
 | Repo | Version | Notes |
@@ -108,6 +122,24 @@ different versions. Fix: `substituteInPlace` to loosen all pins. Also patched
 3. Run `flox build triton-server` repeatedly - each failure gives the correct hash
 4. Check for new `/etc/os-release` references, new test directories, new deps
 5. The Python patch script and path mappings may need updates if third_party changes
+
+## Known Caveats
+
+These don't affect functionality but a maintainer should know about them:
+
+- **`tritonserver` wheel is version 0.0.0**: The core repo's `build_wheel.py` reads
+  `TRITON_VERSION` from a generated file that gets its value from the `VERSION`
+  environment variable. The Nix build sets `TRITON_VERSION` as a cmake flag, but the
+  wheel build script doesn't pick it up the same way. The `tritonfrontend` wheel
+  correctly gets version 2.66.0 because its build reads version info from cmake
+  directly. The `.so` inside the wheel is correct - only the package metadata is wrong.
+- **GPU metrics disabled**: `TRITON_ENABLE_METRICS_GPU=OFF` because DCGM isn't
+  packaged in Nix. CPU metrics and all other Prometheus metrics work fine.
+- **Test files included but not runnable**: `python/test/` contains test scripts and
+  model configs from the wheel build, but the tests require a running server with
+  loaded models and aren't intended to be run standalone.
+- **Cloud storage backends disabled**: GCS, S3, and Azure storage are all OFF. These
+  require additional SDKs that aren't worth the build complexity for local use.
 
 ## Nix Expression Gotchas
 
