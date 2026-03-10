@@ -1,0 +1,4 @@
+{
+  "force_increment": 0,
+  "changelog": "Initial versioned build. ONNX Runtime backend v2.66.0 (r26.02) linked against ORT 1.24.2."
+}

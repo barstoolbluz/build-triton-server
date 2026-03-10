@@ -14,6 +14,14 @@ let
   version = "2.66.0";
   tag = "r26.02";
 
+  # ---------------------------------------------------------------------------
+  # Build versioning — auto-increments from git rev count
+  # ---------------------------------------------------------------------------
+  repoGit = builtins.fetchGit { url = ../..; };
+  buildMeta = builtins.fromJSON (builtins.readFile ../../build-meta/triton-onnxruntime-backend.json);
+  buildVersion = repoGit.revCount + buildMeta.force_increment;
+  pname = "triton-onnxruntime-backend";
+
   ort = import ./onnxruntime-cuda.nix {};
 
   # ---------------------------------------------------------------------------
@@ -51,8 +59,7 @@ let
 in
 
 gcc14Stdenv.mkDerivation {
-  pname = "triton-onnxruntime-backend";
-  inherit version;
+  inherit pname version;
 
   src = onnxrtBackendSrc;
 
@@ -126,6 +133,19 @@ gcc14Stdenv.mkDerivation {
     export CUDA_ARCH_LIST="80 86 89 90"
     export CUDAARCHS="80;86;89;90"
     export CUDAHOSTCXX="${gcc14Stdenv.cc}/bin/g++"
+  '';
+
+  postInstall = ''
+    mkdir -p $out/share/${pname}
+    cat > $out/share/${pname}/flox-build-version-${toString buildVersion} <<'MARKER'
+build-version: ${toString buildVersion}
+upstream-version: ${version}
+upstream-tag: ${tag}
+git-rev: ${repoGit.rev}
+git-rev-short: ${repoGit.shortRev}
+force-increment: ${toString buildMeta.force_increment}
+changelog: ${buildMeta.changelog}
+MARKER
   '';
 
   # Move lib64 contents to lib before fixupPhase

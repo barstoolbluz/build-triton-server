@@ -28,6 +28,14 @@ let
   version = "2.66.0";
   tag = "r26.02";
 
+  # ---------------------------------------------------------------------------
+  # Build versioning — auto-increments from git rev count
+  # ---------------------------------------------------------------------------
+  repoGit = builtins.fetchGit { url = ../..; };
+  buildMeta = builtins.fromJSON (builtins.readFile ../../build-meta/triton-server.json);
+  buildVersion = repoGit.revCount + buildMeta.force_increment;
+  pname = "triton-server";
+
   buildPython = python3.withPackages (ps: [
     ps.setuptools ps.wheel ps.build ps.numpy ps.mypy
   ]);
@@ -128,8 +136,7 @@ let
 in
 
 gcc14Stdenv.mkDerivation {
-  pname = "triton-server";
-  inherit version;
+  inherit pname version;
 
   src = serverSrc;
 
@@ -372,6 +379,17 @@ set(CMAKE_CUDA_ARCHITECTURES "80;86;89;90" CACHE STRING "")'
     cp ${../../scripts/triton-resolve-model} $out/bin/triton-resolve-model
     cp ${../../scripts/triton-serve} $out/bin/triton-serve
     chmod +x $out/bin/triton-{preflight,resolve-model,serve}
+
+    mkdir -p $out/share/${pname}
+    cat > $out/share/${pname}/flox-build-version-${toString buildVersion} <<'MARKER'
+build-version: ${toString buildVersion}
+upstream-version: ${version}
+upstream-tag: ${tag}
+git-rev: ${repoGit.rev}
+git-rev-short: ${repoGit.shortRev}
+force-increment: ${toString buildMeta.force_increment}
+changelog: ${buildMeta.changelog}
+MARKER
   '';
 
   # Move lib64 contents to lib before fixupPhase tries (and fails due to subdirs)

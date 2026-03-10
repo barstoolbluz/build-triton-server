@@ -1,0 +1,4 @@
+{
+  "force_increment": 0,
+  "changelog": "Initial versioned build. Bundled runtime scripts (triton-serve, triton-preflight, triton-resolve-model, _lib.sh) into $out/bin/."
+}
