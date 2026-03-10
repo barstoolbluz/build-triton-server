@@ -31,8 +31,12 @@ readonly PROJECT_BACKENDS="${FLOX_ENV_PROJECT:+${FLOX_ENV_PROJECT}/backends}"
 # ── helpers ──────────────────────────────────────────────────────────
 
 _is_python_backend() {
-  local dir="$1"
-  [[ -f "${dir}/model.py" ]] && ! compgen -G "${dir}/libtriton_*.so" >/dev/null
+  local dir="$1" f
+  [[ -f "${dir}/model.py" ]] || return 1
+  for f in "${dir}"/libtriton_*.so; do
+    [[ -e "$f" ]] && return 1
+  done
+  return 0
 }
 
 _symlink_files() {
@@ -86,7 +90,7 @@ if [[ -n "$PROJECT_BACKENDS" && -d "$PROJECT_BACKENDS" ]]; then
 
     # Inject python backend stub if this is a Python-based backend.
     if _is_python_backend "$entry"; then
-      local python_dir="${ENV_BACKENDS}/python"
+      python_dir="${ENV_BACKENDS}/python"
       if [[ -d "$python_dir" ]]; then
         ln -sf "${python_dir}/triton_python_backend_stub" "${local_dir}/triton_python_backend_stub"
         ln -sf "${python_dir}/triton_python_backend_utils.py" "${local_dir}/triton_python_backend_utils.py"

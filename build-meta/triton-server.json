@@ -1,7 +1,7 @@
 {
-  "build_version": 12,
+  "build_version": 13,
   "force_increment": 0,
-  "git_rev": "0dcdfa59aae5a4a44c66ca217b871dd25c14242f",
-  "git_rev_short": "0dcdfa5",
-  "changelog": "Add triton-setup-backends script for portable backend discovery at activation time."
+  "git_rev": "82b501c69e77d9de40a7623ba8cdd2b603347f4c",
+  "git_rev_short": "82b501c",
+  "changelog": "Fix triton-setup-backends: replace compgen with glob loop, remove stray local."
 }
