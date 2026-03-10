@@ -1,6 +1,6 @@
 # Triton Inference Server - Nix Build
 
-Build NVIDIA Triton Inference Server v2.66.0 from source using Flox/Nix.
+Build NVIDIA Triton Inference Server v2.66.0 and its backends (Python, ONNX Runtime) from source using Flox/Nix.
 
 ## Prerequisites
 
@@ -14,9 +14,17 @@ Build NVIDIA Triton Inference Server v2.66.0 from source using Flox/Nix.
 ```bash
 git add .flox/pkgs/triton-server.nix
 flox build triton-server
+
+git add .flox/pkgs/triton-python-backend.nix
+flox build triton-python-backend
+
+git add .flox/pkgs/onnxruntime-cuda.nix .flox/pkgs/triton-onnxruntime-backend.nix
+flox build onnxruntime-cuda                      # ~1 hr, cached after first build
+flox build triton-onnxruntime-backend             # ~5 min, links against cached ORT
 ```
 
-Build output appears at `./result-triton-server/`.
+Build output appears at `./result-triton-server/`, `./result-triton-python-backend/`,
+and `./result-triton-onnxruntime-backend/`.
 
 ## Build Output
 
@@ -48,6 +56,31 @@ result-triton-server/
     tritonserver-*.tar.gz # Source tarball
 ```
 
+```
+result-triton-python-backend/
+  backends/python/
+    libtriton_python.so              # Backend shared library (1.4 MB)
+    triton_python_backend_stub       # Per-instance Python host executable (1.5 MB)
+    triton_python_backend_utils.py   # Python utilities for user model code
+```
+
+```
+result-onnxruntime-cuda/
+  lib/
+    libonnxruntime.so                  # Main shared library (29 MB)
+    libonnxruntime_providers_shared.so # Provider framework (15 KB)
+    libonnxruntime_providers_cuda.so   # CUDA execution provider (272 MB)
+```
+
+```
+result-triton-onnxruntime-backend/
+  backends/onnxruntime/
+    libtriton_onnxruntime.so           # Backend shared library (800 KB)
+```
+
+The backend's RPATH is automatically patched by Nix to reference the ORT store path,
+so `libtriton_onnxruntime.so` finds `libonnxruntime.so` at runtime without copying.
+
 ## Usage
 
 ```bash
@@ -60,6 +93,24 @@ result-triton-server/
 
 # Check it works
 ./result-triton-server/bin/tritonserver --help
+
+# With the python backend
+./result-triton-server/bin/tritonserver \
+  --model-repository=/path/to/models \
+  --backend-directory=./result-triton-python-backend/backends
+
+# With the ONNX Runtime backend
+./result-triton-server/bin/tritonserver \
+  --model-repository=/path/to/models \
+  --backend-directory=./result-triton-onnxruntime-backend/backends
+
+# With multiple backends (symlink both into a combined directory)
+mkdir -p ./backends
+ln -s $(readlink -f ./result-triton-python-backend/backends/python) ./backends/python
+ln -s $(readlink -f ./result-triton-onnxruntime-backend/backends/onnxruntime) ./backends/onnxruntime
+./result-triton-server/bin/tritonserver \
+  --model-repository=/path/to/models \
+  --backend-directory=./backends
 ```
 
 ## Building Custom Backends
@@ -109,6 +160,29 @@ environment. Key adaptations:
 - `lib64` paths normalized to `lib` (GNUInstallDirs x86_64 default vs Triton expectation)
 - Tests disabled (they require network access to fetch googletest)
 
+The python backend expression at `.flox/pkgs/triton-python-backend.nix` follows the
+same pattern but pre-fetches 7 sources instead of 12. Four are shared with the server
+(core, common, backend, pybind11); the python backend additionally needs dlpack v0.8
+and a Boost 1.80.0 tarball. Boost is fetched via `TRITON_BOOST_URL=file://` redirect
+because the upstream CMake uses `ExternalProject` (not `FetchContent`) for it. The same
+sandbox adaptations apply: `/etc/os-release` stub, test disabling, and `lib64` merge.
+
+The ONNX Runtime backend is split into two expressions:
+
+- **`.flox/pkgs/onnxruntime-cuda.nix`** — Builds ONNX Runtime 1.24.2 as a C++ shared
+  library with CUDA support. Uses a standalone nixpkgs-pin pattern (not callPackage)
+  because it overrides `nixpkgs.onnxruntime` with a specific nixpkgs revision and CUDA
+  12.9 overlay. Multi-arch build (sm_80/86/89/90). This is the slow build (~1 hr) that
+  gets cached independently.
+
+- **`.flox/pkgs/triton-onnxruntime-backend.nix`** — Builds the Triton backend shim that
+  links against the pre-built ORT library. Uses the same callPackage/sandbox pattern as
+  the python backend. Pre-fetches 4 repos (onnxruntime_backend + core/common/backend
+  shared with server and python backend). Fast build (~5 min). Requires `CUDA_ARCH_LIST`
+  and `CUDAARCHS` env vars (same as server build) to override the backend repo's default
+  `define.cuda_architectures.cmake` which includes `100f`/`120f` — unsupported by nvcc
+  12.8.
+
 ## Nix Build Parallelism
 
 The build spawns parallel cmake sub-builds. If you run out of memory, adjust
@@ -125,13 +199,32 @@ cores = 2
 
 To build a different Triton version:
 
-1. Edit `.flox/pkgs/triton-server.nix`
-2. Update `version` and `tag` at the top
+1. Edit `.flox/pkgs/triton-server.nix`, `.flox/pkgs/triton-python-backend.nix`, and
+   `.flox/pkgs/triton-onnxruntime-backend.nix`
+2. Update `version` and `tag` at the top of all three files
 3. Clear all `fetchFromGitHub` `hash` fields (set to `""`)
 4. Run `flox build` repeatedly - each failure prints the correct hash
 5. Fix any new build errors (new deps, changed cmake structure, etc.)
 
+All three expressions share the same `tag`/`version` and 3 of the same source repos
+(core, common, backend), so they should always be upgraded together. The ORT library
+version in `onnxruntime-cuda.nix` may also need updating to match what the new Triton
+release expects.
+
 See `CLAUDE.md` for detailed notes on every sandbox challenge encountered.
+
+## Verified Store Paths
+
+Current build outputs (for use in `store-path` references from consuming environments):
+
+```
+triton-server:              /nix/store/0fgkz60kl9pfl541p1k9pwvw4x1lhgbm-triton-server-2.66.0
+triton-python-backend:      /nix/store/yhk1sv3ycny5k27nyfimsa4pb9xdin9y-triton-python-backend-2.66.0
+onnxruntime-cuda:           /nix/store/3hys619h5k6bdsp6c2jf2r378q63h354-onnxruntime-cuda-1.24.2
+triton-onnxruntime-backend: /nix/store/x7wsykzn8xrwn1vrf6a7h6k1193i5jcd-triton-onnxruntime-backend-2.66.0
+```
+
+Consuming Flox environments reference these via `store-path` in their `manifest.toml`.
 
 ## License
 

@@ -7,16 +7,26 @@ from source. The build output is at `./result-triton-server/`.
 
 ## Key Files
 
-- `.flox/pkgs/triton-server.nix` - The Nix expression (primary deliverable)
+- `.flox/pkgs/triton-server.nix` - Triton server Nix expression
+- `.flox/pkgs/triton-python-backend.nix` - Python backend expression (callPackage)
+- `.flox/pkgs/onnxruntime-cuda.nix` - ONNX Runtime C++ library (standalone nixpkgs-pin)
+- `.flox/pkgs/triton-onnxruntime-backend.nix` - ORT backend expression (callPackage)
 - `.flox/env/manifest.toml` - Flox manifest (minimal, just for `flox build`)
 - `result-triton-server/` - Build output symlink
 
-## Build Command
+## Build Commands
 
 ```bash
 cd /home/daedalus/dev/builds/build-triton-server
 git add .flox/pkgs/triton-server.nix   # Flox requires tracked files
 flox build triton-server
+
+git add .flox/pkgs/triton-python-backend.nix
+flox build triton-python-backend
+
+git add .flox/pkgs/onnxruntime-cuda.nix .flox/pkgs/triton-onnxruntime-backend.nix
+flox build onnxruntime-cuda                      # ~1 hr, cached after first build
+flox build triton-onnxruntime-backend             # ~5 min
 ```
 
 ## Architecture Decisions
@@ -56,6 +66,36 @@ build read different sources:
 - `CMAKE_CUDA_ARCHITECTURES` injected via `set(... CACHE ...)` into
   `server/src/CMakeLists.txt` - propagates into the ExternalProject sub-build, which
   runs as a separate cmake process and doesn't inherit env vars or parent cmake vars
+
+### ONNX Runtime Backend: Two-Expression Architecture
+
+The ORT backend is split into two Nix expressions so that the slow ORT library build
+(~1 hr) is cached independently from the fast Triton backend shim (~5 min):
+
+1. **`onnxruntime-cuda.nix`** — Uses standalone nixpkgs-pin pattern (not callPackage)
+   because it needs to override `nixpkgs.onnxruntime` with a specific nixpkgs revision
+   and a CUDA 12.9 overlay. Key differences from the `build-onnx-runtime` repo:
+   - `pythonSupport = false` — C++ shared library only, no Python wheel
+   - Multi-arch `CMAKE_CUDA_ARCHITECTURES=80;86;89;90` instead of single-arch variants
+   - No CPU ISA flags (`-mavx512f` etc.) — irrelevant for GPU inference
+
+2. **`triton-onnxruntime-backend.nix`** — Uses callPackage convention (like
+   `triton-python-backend.nix`). Imports `onnxruntime-cuda.nix` and passes the ORT
+   output as `TRITON_ONNXRUNTIME_INCLUDE_PATHS` / `TRITON_ONNXRUNTIME_LIB_PATHS` to
+   CMake. This bypasses the backend's Docker-based build and download mechanisms.
+
+### CUDA Version Mismatch (ORT vs Backend)
+
+ORT uses nixpkgs CUDA 12.9 (pinned in the nixpkgs overlay); the Triton backend uses
+Flox CUDA 12.8. Both are CUDA 12.x minor versions — runtime-compatible. The NVIDIA
+driver 590.48.01 supports both. The backend only links `cudart` (no CUDA kernels), so
+the version difference is inconsequential.
+
+### ORT Version: 1.24.2 vs 1.24.1
+
+Triton r26.02 specifies ORT 1.24.1, but we use 1.24.2 (patch release, ABI-compatible).
+This reuses exact source hashes from the `build-onnx-runtime` repo's `ort-1.24` branch.
+If issues arise, pin to 1.24.1 by changing the `tag` and clearing the `hash`.
 
 ## Critical Nix Sandbox Challenges (and solutions)
 
@@ -114,6 +154,24 @@ used for stub generation during the wheel build. This is why `ps.mypy` is includ
 | nlohmann-json | v3.11.3 | |
 | curl | curl-7_86_0 | |
 | crc32c | b9d6e825... | |
+
+## Pre-Fetched Repos: ONNX Runtime Backend (4 total)
+
+| Repo | Version | Notes |
+|------|---------|-------|
+| onnxruntime_backend | r26.02 | Main source (src=) |
+| core | r26.02 | Writable copy needed (shared hash with server/python) |
+| common | r26.02 | Writable copy needed (shared hash with server/python) |
+| backend | r26.02 | Read-only OK (shared hash with server/python) |
+
+## Pre-Fetched Repos: ORT Library (4 total)
+
+| Repo | Version | Notes |
+|------|---------|-------|
+| onnxruntime | v1.24.2 | Main source (src=), fetchSubmodules=true |
+| cutlass | v4.2.1 | NVIDIA CUTLASS for CUDA kernels |
+| onnx | v1.20.1 | ONNX proto definitions |
+| abseil-cpp | 20250814.0 | Abseil C++ library |
 
 ## Upgrading to a New Triton Version
 
