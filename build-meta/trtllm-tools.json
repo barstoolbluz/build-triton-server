@@ -1,0 +1,7 @@
+{
+  "build_version": 20,
+  "force_increment": 0,
+  "git_rev": "72e0fc6ef1921ebdbf4b76ea116adbfccff55bd2",
+  "git_rev_short": "72e0fc6",
+  "changelog": "Initial trtllm-tools package: Python 3.12 + tensorrt_llm 1.1.0 model conversion tools extracted from NGC container."
+}
