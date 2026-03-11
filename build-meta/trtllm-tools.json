@@ -1,7 +1,7 @@
 {
-  "build_version": 21,
+  "build_version": 22,
   "force_increment": 0,
-  "git_rev": "265e0c108e62b36f09e724cbd9628858be5df712",
-  "git_rev_short": "265e0c1",
-  "changelog": "Split into 4 sub-packages (libs, python, engine, wrapper) to stay under 5 GB Flox catalog NAR limit."
+  "git_rev": "8880f0b",
+  "git_rev_short": "8880f0b",
+  "changelog": "Split libs into libs-cuda + libs-ml (5 sub-packages total); fix nullglob breaking tar --exclude globs."
 }

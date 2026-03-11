@@ -12,20 +12,6 @@ let
 
   parts = import ./trtllm-tools-parts.nix { inherit pkgs; };
 
-  # Packages that belong in trtllm-tools-engine, excluded here
-  engineExcludes = [
-    "--exclude=python/dist-packages/torch"
-    "--exclude=python/dist-packages/torch-*"
-    "--exclude=python/dist-packages/torchgen"
-    "--exclude=python/dist-packages/torchprofile"
-    "--exclude=python/dist-packages/torchprofile-*"
-    "--exclude=python/dist-packages/torchvision"
-    "--exclude=python/dist-packages/torchvision-*"
-    "--exclude=python/dist-packages/torchvision.libs"
-    "--exclude=python/dist-packages/tensorrt_llm"
-    "--exclude=python/dist-packages/tensorrt_llm-*"
-  ];
-
 in pkgs.stdenv.mkDerivation {
   inherit pname version;
 
@@ -34,10 +20,23 @@ in pkgs.stdenv.mkDerivation {
   sourceRoot = ".";
   unpackPhase = ''
     mkdir -p source
+    # Exclude engine directories (no globs — safe with nullglob)
     ${parts.catParts parts} | tar -xzf - -C source \
-      ${builtins.concatStringsSep " " engineExcludes} \
+      --exclude=python/dist-packages/torch \
+      --exclude=python/dist-packages/torchgen \
+      --exclude=python/dist-packages/torchprofile \
+      --exclude=python/dist-packages/torchvision \
+      --exclude=python/dist-packages/torchvision.libs \
+      --exclude=python/dist-packages/tensorrt_llm \
       python/
     cd source
+    # Remove dist-info dirs for engine packages (glob patterns don't work
+    # in tar --exclude because Nix stdenv sets nullglob, which silently
+    # removes unmatched glob arguments before tar sees them)
+    rm -rf python/dist-packages/torch-*.dist-info \
+           python/dist-packages/torchprofile-*.dist-info \
+           python/dist-packages/torchvision-*.dist-info \
+           python/dist-packages/tensorrt_llm-*.dist-info
   '';
 
   nativeBuildInputs = [ pkgs.patchelf ];

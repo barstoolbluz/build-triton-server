@@ -1,14 +1,14 @@
-# trtllm-tools-libs: Native shared libraries for TRT-LLM tools
+# trtllm-tools-libs-cuda: CUDA runtime + math libs for TRT-LLM tools
 #
-# Contains: CUDA 13, cuDNN 9.14, TRT 10.13, MKL, NCCL, MPI, and all other
-# native .so files needed by the Python packages in trtllm-tools-python and
-# trtllm-tools-engine.
+# Contains: CUDA 13 (cudart, cublas, cufft, cusolver, cusparse, curand, nvrtc,
+# nvJitLink, nvvm, npp), cuDNN 9.14, NCCL, MPI, UCX, and misc native libs.
+# Excludes TensorRT and MKL (those are in trtllm-tools-libs-ml).
 #
-# ~6.4 GB uncompressed, ~3.5 GB as NAR.zst (under 5 GB catalog limit)
+# ~2.9 GB uncompressed (under 5 GB catalog limit)
 { pkgs ? import <nixpkgs> {} }:
 
 let
-  pname = "trtllm-tools-libs";
+  pname = "trtllm-tools-libs-cuda";
   version = "2.66.0";
 
   parts = import ./trtllm-tools-parts.nix { inherit pkgs; };
@@ -22,7 +22,13 @@ in pkgs.stdenv.mkDerivation {
   unpackPhase = ''
     mkdir -p source
     ${parts.catParts parts} | tar -xzf - -C source lib/
+    # Remove TensorRT and MKL libs (those belong in trtllm-tools-libs-ml).
+    # Cannot use tar --exclude with globs because Nix stdenv sets nullglob,
+    # which silently removes unmatched glob arguments before tar sees them.
     cd source
+    rm -f lib/libnvinfer* lib/libnvonnxparser* \
+          lib/libmkl* lib/libtbb* lib/libtbbbind* lib/libtbbmalloc* \
+          lib/libiomp* lib/libiompstubs*
   '';
 
   nativeBuildInputs = [ pkgs.patchelf ];
@@ -53,7 +59,7 @@ in pkgs.stdenv.mkDerivation {
   dontStrip = true;
 
   meta = with pkgs.lib; {
-    description = "Native shared libraries for TRT-LLM tools (CUDA, cuDNN, TRT, MKL, NCCL)";
+    description = "CUDA runtime and math libraries for TRT-LLM tools";
     homepage = "https://github.com/NVIDIA/TensorRT-LLM";
     license = licenses.asl20;
     platforms = [ "x86_64-linux" ];

@@ -1,10 +1,11 @@
 # TRT-LLM model conversion tools for NVIDIA TensorRT-LLM
 #
 # Top-level wrapper package (~244 MB) that generates wrapper scripts
-# referencing three sub-packages by Nix store path:
-#   - trtllm-tools-libs   (~6.4 GB) — CUDA 13, cuDNN 9.14, TRT 10.13, MKL, NCCL
-#   - trtllm-tools-python (~4.3 GB) — Python 3.12 + stdlib + most dist-packages
-#   - trtllm-tools-engine (~4.1 GB) — PyTorch 2.9.0a0 + tensorrt_llm 1.1.0
+# referencing four sub-packages by Nix store path:
+#   - trtllm-tools-libs-cuda (~2.9 GB) — CUDA 13, cuDNN 9.14, NCCL, MPI, misc
+#   - trtllm-tools-libs-ml   (~3.5 GB) — TensorRT 10.13, MKL, TBB
+#   - trtllm-tools-python    (~4.3 GB) — Python 3.12 + stdlib + most dist-packages
+#   - trtllm-tools-engine    (~4.1 GB) — PyTorch 2.9.0a0 + tensorrt_llm 1.1.0
 #
 # Each sub-package stays under the 5 GB Flox catalog NAR upload limit.
 #
@@ -25,7 +26,8 @@ let
   parts = import ./trtllm-tools-parts.nix { inherit pkgs; };
 
   # Sub-packages (each under 5 GB NAR)
-  libs      = import ./trtllm-tools-libs.nix { inherit pkgs; };
+  libsCuda  = import ./trtllm-tools-libs-cuda.nix { inherit pkgs; };
+  libsMl    = import ./trtllm-tools-libs-ml.nix { inherit pkgs; };
   pythonPkg = import ./trtllm-tools-python.nix { inherit pkgs; };
   enginePkg = import ./trtllm-tools-engine.nix { inherit pkgs; };
 
@@ -65,8 +67,8 @@ in pkgs.stdenv.mkDerivation {
     # bin/cuda/ has the compiler tools; cuda/bin → ../bin/cuda avoids duplication
     mkdir -p $out/cuda
     ln -sf ../bin/cuda $out/cuda/bin
-    ln -sf ${libs}/lib/nvvm $out/cuda/nvvm
-    ln -sf ${libs}/lib $out/cuda/lib64
+    ln -sf ${libsCuda}/lib/nvvm $out/cuda/nvvm
+    ln -sf ${libsCuda}/lib $out/cuda/lib64
 
     # -- HPC-X OpenMPI prefix (for MPI/OPAL_PREFIX) --
     if [ -d hpcx ]; then
@@ -84,7 +86,7 @@ SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 PKG_DIR="$(dirname "$SCRIPT_DIR")"
 export PYTHONHOME="@pythonPkg@/python"
 export PYTHONPATH="@pythonPkg@/python/dist-packages:@enginePkg@/dist-packages"
-export LD_LIBRARY_PATH="@libs@/lib:@enginePkg@/dist-packages/torch/lib:@enginePkg@/dist-packages/tensorrt_llm/libs''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="@libsCuda@/lib:@libsMl@/lib:@enginePkg@/dist-packages/torch/lib:@enginePkg@/dist-packages/tensorrt_llm/libs''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export PATH="$SCRIPT_DIR:@pythonPkg@/python/bin''${PATH:+:$PATH}"
 export OPAL_PREFIX="$PKG_DIR/hpcx/ompi"
 export CUDA_HOME="$PKG_DIR/cuda"
@@ -102,7 +104,7 @@ SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 PKG_DIR="$(dirname "$SCRIPT_DIR")"
 export PYTHONHOME="@pythonPkg@/python"
 export PYTHONPATH="@pythonPkg@/python/dist-packages:@enginePkg@/dist-packages"
-export LD_LIBRARY_PATH="@libs@/lib:@enginePkg@/dist-packages/torch/lib:@enginePkg@/dist-packages/tensorrt_llm/libs''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="@libsCuda@/lib:@libsMl@/lib:@enginePkg@/dist-packages/torch/lib:@enginePkg@/dist-packages/tensorrt_llm/libs''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export PATH="$SCRIPT_DIR:@pythonPkg@/python/bin''${PATH:+:$PATH}"
 export OPAL_PREFIX="$PKG_DIR/hpcx/ompi"
 export CUDA_HOME="$PKG_DIR/cuda"
@@ -120,7 +122,7 @@ SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 PKG_DIR="$(dirname "$SCRIPT_DIR")"
 export PYTHONHOME="@pythonPkg@/python"
 export PYTHONPATH="@pythonPkg@/python/dist-packages:@enginePkg@/dist-packages"
-export LD_LIBRARY_PATH="@libs@/lib:@enginePkg@/dist-packages/torch/lib:@enginePkg@/dist-packages/tensorrt_llm/libs''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="@libsCuda@/lib:@libsMl@/lib:@enginePkg@/dist-packages/torch/lib:@enginePkg@/dist-packages/tensorrt_llm/libs''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export PATH="$SCRIPT_DIR:@pythonPkg@/python/bin''${PATH:+:$PATH}"
 export OPAL_PREFIX="$PKG_DIR/hpcx/ompi"
 export CUDA_HOME="$PKG_DIR/cuda"
@@ -138,7 +140,7 @@ SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 PKG_DIR="$(dirname "$SCRIPT_DIR")"
 export PYTHONHOME="@pythonPkg@/python"
 export PYTHONPATH="@pythonPkg@/python/dist-packages:@enginePkg@/dist-packages"
-export LD_LIBRARY_PATH="@libs@/lib:@enginePkg@/dist-packages/torch/lib:@enginePkg@/dist-packages/tensorrt_llm/libs''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="@libsCuda@/lib:@libsMl@/lib:@enginePkg@/dist-packages/torch/lib:@enginePkg@/dist-packages/tensorrt_llm/libs''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export PATH="$SCRIPT_DIR:@pythonPkg@/python/bin''${PATH:+:$PATH}"
 export OPAL_PREFIX="$PKG_DIR/hpcx/ompi"
 export CUDA_HOME="$PKG_DIR/cuda"
@@ -156,7 +158,7 @@ SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 PKG_DIR="$(dirname "$SCRIPT_DIR")"
 export PYTHONHOME="@pythonPkg@/python"
 export PYTHONPATH="@pythonPkg@/python/dist-packages:@enginePkg@/dist-packages"
-export LD_LIBRARY_PATH="@libs@/lib:@enginePkg@/dist-packages/torch/lib:@enginePkg@/dist-packages/tensorrt_llm/libs''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="@libsCuda@/lib:@libsMl@/lib:@enginePkg@/dist-packages/torch/lib:@enginePkg@/dist-packages/tensorrt_llm/libs''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export PATH="$SCRIPT_DIR:@pythonPkg@/python/bin''${PATH:+:$PATH}"
 export OPAL_PREFIX="$PKG_DIR/hpcx/ompi"
 export CUDA_HOME="$PKG_DIR/cuda"
@@ -174,7 +176,7 @@ SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 PKG_DIR="$(dirname "$SCRIPT_DIR")"
 export PYTHONHOME="@pythonPkg@/python"
 export PYTHONPATH="@pythonPkg@/python/dist-packages:@enginePkg@/dist-packages"
-export LD_LIBRARY_PATH="@libs@/lib:@enginePkg@/dist-packages/torch/lib:@enginePkg@/dist-packages/tensorrt_llm/libs''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="@libsCuda@/lib:@libsMl@/lib:@enginePkg@/dist-packages/torch/lib:@enginePkg@/dist-packages/tensorrt_llm/libs''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export PATH="$SCRIPT_DIR:@pythonPkg@/python/bin''${PATH:+:$PATH}"
 export OPAL_PREFIX="$PKG_DIR/hpcx/ompi"
 export CUDA_HOME="$PKG_DIR/cuda"
@@ -190,7 +192,7 @@ TRTLLM_WRAPPER_EOF
 #!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
-export LD_LIBRARY_PATH="@libs@/lib:@enginePkg@/dist-packages/torch/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="@libsCuda@/lib:@libsMl@/lib:@enginePkg@/dist-packages/torch/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 exec "$SCRIPT_DIR/.trtexec.real" "$@"
 TRTLLM_WRAPPER_EOF
     chmod +x $out/bin/trtexec
@@ -208,13 +210,15 @@ TRTLLM_WRAPPER_EOF
       substituteInPlace "$f" \
         --replace-fail '@pythonPkg@' '${pythonPkg}' \
         --replace-fail '@enginePkg@' '${enginePkg}' \
-        --replace-fail '@libs@' '${libs}'
+        --replace-fail '@libsCuda@' '${libsCuda}' \
+        --replace-fail '@libsMl@' '${libsMl}'
     done
 
     # trtexec only needs libs and engine (no Python)
     substituteInPlace $out/bin/trtexec \
       --replace-fail '@enginePkg@' '${enginePkg}' \
-      --replace-fail '@libs@' '${libs}'
+      --replace-fail '@libsCuda@' '${libsCuda}' \
+      --replace-fail '@libsMl@' '${libsMl}'
 
     # Patch trtllm-llmapi-launch environment block (replace BUNDLE_DIR references)
     substituteInPlace $out/bin/trtllm-llmapi-launch \
@@ -225,7 +229,7 @@ TRTLLM_WRAPPER_EOF
       --replace-fail 'PYTHONPATH="$BUNDLE_DIR/python/dist-packages"' \
                      'PYTHONPATH="${pythonPkg}/python/dist-packages:${enginePkg}/dist-packages"' \
       --replace-fail 'LD_LIBRARY_PATH="$BUNDLE_DIR/lib:$BUNDLE_DIR/python/dist-packages/torch/lib:$BUNDLE_DIR/python/dist-packages/tensorrt_llm/libs' \
-                     'LD_LIBRARY_PATH="${libs}/lib:${enginePkg}/dist-packages/torch/lib:${enginePkg}/dist-packages/tensorrt_llm/libs' \
+                     'LD_LIBRARY_PATH="${libsCuda}/lib:${libsMl}/lib:${enginePkg}/dist-packages/torch/lib:${enginePkg}/dist-packages/tensorrt_llm/libs' \
       --replace-fail 'PATH="$BUNDLE_DIR/bin:$BUNDLE_DIR/python/bin' \
                      'PATH="$SCRIPT_DIR:${pythonPkg}/python/bin' \
       --replace-fail '"$BUNDLE_DIR/hpcx/ompi"' \
@@ -250,13 +254,13 @@ TRTLLM_WRAPPER_EOF
 
   postFixup = ''
     # ---- bin/.trtexec.real ----
-    patchelf --set-rpath '${libs}/lib' \
+    patchelf --set-rpath '${libsCuda}/lib:${libsMl}/lib' \
       $out/bin/.trtexec.real 2>/dev/null || true
 
     # ---- CUDA compiler tools ----
     for f in $out/bin/cuda/*; do
       [ -f "$f" ] || continue
-      patchelf --set-rpath '${libs}/lib' "$f" 2>/dev/null || true
+      patchelf --set-rpath '${libsCuda}/lib' "$f" 2>/dev/null || true
     done
 
     # ---- hpcx/ompi libraries ----
