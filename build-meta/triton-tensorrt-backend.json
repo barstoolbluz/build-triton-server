@@ -1,0 +1,7 @@
+{
+  "build_version": 14,
+  "force_increment": 0,
+  "git_rev": "09958caf19b83a2fc3eb70fcecb53d1213ef4ca5",
+  "git_rev_short": "09958ca",
+  "changelog": "Initial build. TensorRT backend v2.66.0 (r26.02)."
+}
