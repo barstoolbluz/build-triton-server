@@ -1,6 +1,6 @@
 # Triton Inference Server - Nix Build
 
-Build NVIDIA Triton Inference Server v2.66.0 and its backends (Python, ONNX Runtime, TensorRT, TensorRT-LLM) from source using Flox/Nix.
+Build NVIDIA Triton Inference Server v2.66.0 and its backends (Python, ONNX Runtime, TensorRT) from source using Flox/Nix, plus TensorRT-LLM via NGC container extraction.
 
 ## Prerequisites
 
