@@ -1,7 +1,7 @@
 {
-  "build_version": 20,
+  "build_version": 21,
   "force_increment": 0,
-  "git_rev": "72e0fc6ef1921ebdbf4b76ea116adbfccff55bd2",
-  "git_rev_short": "72e0fc6",
-  "changelog": "Initial trtllm-tools package: Python 3.12 + tensorrt_llm 1.1.0 model conversion tools extracted from NGC container."
+  "git_rev": "265e0c108e62b36f09e724cbd9628858be5df712",
+  "git_rev_short": "265e0c1",
+  "changelog": "Split into 4 sub-packages (libs, python, engine, wrapper) to stay under 5 GB Flox catalog NAR limit."
 }

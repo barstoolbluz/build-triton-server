@@ -1,18 +1,16 @@
 # TRT-LLM model conversion tools for NVIDIA TensorRT-LLM
 #
-# Self-contained Python 3.12 environment with tensorrt_llm 1.1.0, PyTorch 2.9.0a0,
-# and all dependencies needed for HuggingFace → TRT-LLM engine conversion.
+# Top-level wrapper package (~244 MB) that generates wrapper scripts
+# referencing three sub-packages by Nix store path:
+#   - trtllm-tools-libs   (~6.4 GB) — CUDA 13, cuDNN 9.14, TRT 10.13, MKL, NCCL
+#   - trtllm-tools-python (~4.3 GB) — Python 3.12 + stdlib + most dist-packages
+#   - trtllm-tools-engine (~4.1 GB) — PyTorch 2.9.0a0 + tensorrt_llm 1.1.0
 #
-# Extracted from NGC container nvcr.io/nvidia/tritonserver:26.02-trtllm-python-py3
-# because tensorrt_llm requires Python 3.12 and custom NVIDIA PyTorch (incompatible
-# with triton-runtime's Python 3.13 environment).
+# Each sub-package stays under the 5 GB Flox catalog NAR upload limit.
 #
-# Bundle includes:
-#   bin/           - trtllm-build, trtllm-bench, trtllm-eval, trtllm-prune,
-#                    trtllm-refit, trtllm-serve, trtexec, trtllm-llmapi-launch
-#   python/        - Python 3.12 interpreter + stdlib + dist-packages
-#   lib/           - CUDA 13, cuDNN 9.14, TRT 10.13, MKL, NCCL native libs
-#   cuda/          - CUDA home structure (bin/ symlinks to ../bin/cuda/, nvvm, lib64)
+# This package contains only:
+#   bin/           - wrapper scripts, .trtexec.real, cuda/ compiler tools
+#   cuda/          - CUDA home structure (deep_gemm needs CUDA_HOME)
 #   hpcx/ompi/     - OpenMPI prefix for MPI support (OPAL_PREFIX)
 { pkgs ? import <nixpkgs> {} }:
 
@@ -24,38 +22,23 @@ let
   buildMeta = builtins.fromJSON (builtins.readFile ../../build-meta/trtllm-tools.json);
   buildVersion = buildMeta.build_version;
 
-  # Bundle is split into parts to stay under GitHub Releases' 2 GB file size limit.
-  # Parts are concatenated during unpackPhase to reconstruct the original tarball.
-  bundlePart0 = pkgs.fetchurl {
-    url = "https://github.com/barstoolbluz/build-triton-server/releases/download/v26.02-tools/trtllm-tools-bundle-26.02.tar.gz.part0";
-    hash = "sha256-ceOeiaV3nS0PJ5nMZt/r4881YDbDaXJerWF7Jy/Rok4=";
-  };
-  bundlePart1 = pkgs.fetchurl {
-    url = "https://github.com/barstoolbluz/build-triton-server/releases/download/v26.02-tools/trtllm-tools-bundle-26.02.tar.gz.part1";
-    hash = "sha256-SHiX44YM8PwtPw0iqoe8gTuejPvTmPET8eDJU8E131o=";
-  };
-  bundlePart2 = pkgs.fetchurl {
-    url = "https://github.com/barstoolbluz/build-triton-server/releases/download/v26.02-tools/trtllm-tools-bundle-26.02.tar.gz.part2";
-    hash = "sha256-TQEqSG6AjQa54OfZWYKO5BvsIKs8rKZ5l+0/pQxsCWg=";
-  };
-  bundlePart3 = pkgs.fetchurl {
-    url = "https://github.com/barstoolbluz/build-triton-server/releases/download/v26.02-tools/trtllm-tools-bundle-26.02.tar.gz.part3";
-    hash = "sha256-IOfg1nYoiX1bwOdUMQt5VHqxe2ye6myCPa7gBm/6Nw0=";
-  };
-  bundlePart4 = pkgs.fetchurl {
-    url = "https://github.com/barstoolbluz/build-triton-server/releases/download/v26.02-tools/trtllm-tools-bundle-26.02.tar.gz.part4";
-    hash = "sha256-ApZuFrid/lQuUXI/s+45GlTfJN9ARDJKCQce+0tIFPg=";
-  };
+  parts = import ./trtllm-tools-parts.nix { inherit pkgs; };
+
+  # Sub-packages (each under 5 GB NAR)
+  libs      = import ./trtllm-tools-libs.nix { inherit pkgs; };
+  pythonPkg = import ./trtllm-tools-python.nix { inherit pkgs; };
+  enginePkg = import ./trtllm-tools-engine.nix { inherit pkgs; };
 
 in pkgs.stdenv.mkDerivation {
   inherit pname version;
 
-  src = bundlePart0;
+  src = parts.bundlePart0;
 
   sourceRoot = ".";
   unpackPhase = ''
     mkdir -p source
-    cat ${bundlePart0} ${bundlePart1} ${bundlePart2} ${bundlePart3} ${bundlePart4} | tar -xzf - -C source
+    ${parts.catParts parts} | tar -xzf - -C source \
+      bin/ hpcx/
     cd source
   '';
 
@@ -67,12 +50,9 @@ in pkgs.stdenv.mkDerivation {
   installPhase = ''
     runHook preInstall
 
-    # -- Wrapper scripts --
     mkdir -p $out/bin
-    cp bin/trtllm-build bin/trtllm-bench bin/trtllm-eval \
-       bin/trtllm-prune bin/trtllm-refit bin/trtllm-serve \
-       bin/trtexec bin/trtllm-llmapi-launch \
-       $out/bin/
+
+    # -- trtexec binary --
     cp bin/.trtexec.real $out/bin/
 
     # -- CUDA compiler tools --
@@ -81,45 +61,177 @@ in pkgs.stdenv.mkDerivation {
       cp -P bin/cuda/* $out/bin/cuda/
     fi
 
-    # -- Python interpreter + stdlib --
-    mkdir -p $out/python/bin
-    cp python/bin/python3.12 $out/python/bin/
-    cp -a python/lib $out/python/
-    cp -a python/dist-packages $out/python/
-
-    # Fix broken symlinks from container layout
-    # config dir libpython points to ../../x86_64-linux-gnu/ (doesn't exist)
-    rm -f $out/python/lib/python3.12/config-3.12-x86_64-linux-gnu/libpython3.12.so
-    ln -sf ../../../../lib/libpython3.12.so \
-      $out/python/lib/python3.12/config-3.12-x86_64-linux-gnu/libpython3.12.so
-    # sitecustomize.py points to /etc/python3.12/ (container path)
-    rm -f $out/python/lib/python3.12/sitecustomize.py
-
-    # -- Native shared libraries --
-    mkdir -p $out/lib
-    cp -P lib/*.so lib/*.so.* $out/lib/ 2>/dev/null || true
-    # nvvm libdevice (needed for runtime compilation)
-    if [ -d lib/nvvm ]; then
-      cp -a lib/nvvm $out/lib/
-    fi
-
     # -- CUDA home structure (for deep_gemm CUDA_HOME) --
-    if [ -d cuda ]; then
-      mkdir -p $out/cuda/bin
-      cp -P cuda/bin/* $out/cuda/bin/ 2>/dev/null || true
-      # Re-create symlinks relative to $out
-      if [ -L cuda/nvvm ]; then
-        ln -sf ../lib/nvvm $out/cuda/nvvm
-      fi
-      if [ -L cuda/lib64 ]; then
-        ln -sf ../lib $out/cuda/lib64
-      fi
-    fi
+    # bin/cuda/ has the compiler tools; cuda/bin → ../bin/cuda avoids duplication
+    mkdir -p $out/cuda
+    ln -sf ../bin/cuda $out/cuda/bin
+    ln -sf ${libs}/lib/nvvm $out/cuda/nvvm
+    ln -sf ${libs}/lib $out/cuda/lib64
 
     # -- HPC-X OpenMPI prefix (for MPI/OPAL_PREFIX) --
     if [ -d hpcx ]; then
       cp -a hpcx $out/
     fi
+
+    # -- Generate Python tool wrappers --
+    # Each wrapper sets up the environment using hardcoded store paths
+    # to the sub-packages, then invokes the appropriate entry point.
+
+    cat > $out/bin/trtllm-build << 'TRTLLM_WRAPPER_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+PKG_DIR="$(dirname "$SCRIPT_DIR")"
+export PYTHONHOME="@pythonPkg@/python"
+export PYTHONPATH="@pythonPkg@/python/dist-packages:@enginePkg@/dist-packages"
+export LD_LIBRARY_PATH="@libs@/lib:@enginePkg@/dist-packages/torch/lib:@enginePkg@/dist-packages/tensorrt_llm/libs''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export PATH="$SCRIPT_DIR:@pythonPkg@/python/bin''${PATH:+:$PATH}"
+export OPAL_PREFIX="$PKG_DIR/hpcx/ompi"
+export CUDA_HOME="$PKG_DIR/cuda"
+exec "@pythonPkg@/python/bin/python3.12" -c "
+from tensorrt_llm.commands.build import main
+import sys; sys.exit(main())
+" "$@"
+TRTLLM_WRAPPER_EOF
+    chmod +x $out/bin/trtllm-build
+
+    cat > $out/bin/trtllm-bench << 'TRTLLM_WRAPPER_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+PKG_DIR="$(dirname "$SCRIPT_DIR")"
+export PYTHONHOME="@pythonPkg@/python"
+export PYTHONPATH="@pythonPkg@/python/dist-packages:@enginePkg@/dist-packages"
+export LD_LIBRARY_PATH="@libs@/lib:@enginePkg@/dist-packages/torch/lib:@enginePkg@/dist-packages/tensorrt_llm/libs''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export PATH="$SCRIPT_DIR:@pythonPkg@/python/bin''${PATH:+:$PATH}"
+export OPAL_PREFIX="$PKG_DIR/hpcx/ompi"
+export CUDA_HOME="$PKG_DIR/cuda"
+exec "@pythonPkg@/python/bin/python3.12" -c "
+from tensorrt_llm.commands.bench import main
+import sys; sys.exit(main())
+" "$@"
+TRTLLM_WRAPPER_EOF
+    chmod +x $out/bin/trtllm-bench
+
+    cat > $out/bin/trtllm-eval << 'TRTLLM_WRAPPER_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+PKG_DIR="$(dirname "$SCRIPT_DIR")"
+export PYTHONHOME="@pythonPkg@/python"
+export PYTHONPATH="@pythonPkg@/python/dist-packages:@enginePkg@/dist-packages"
+export LD_LIBRARY_PATH="@libs@/lib:@enginePkg@/dist-packages/torch/lib:@enginePkg@/dist-packages/tensorrt_llm/libs''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export PATH="$SCRIPT_DIR:@pythonPkg@/python/bin''${PATH:+:$PATH}"
+export OPAL_PREFIX="$PKG_DIR/hpcx/ompi"
+export CUDA_HOME="$PKG_DIR/cuda"
+exec "@pythonPkg@/python/bin/python3.12" -c "
+from tensorrt_llm.commands.eval import main
+import sys; sys.exit(main())
+" "$@"
+TRTLLM_WRAPPER_EOF
+    chmod +x $out/bin/trtllm-eval
+
+    cat > $out/bin/trtllm-prune << 'TRTLLM_WRAPPER_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+PKG_DIR="$(dirname "$SCRIPT_DIR")"
+export PYTHONHOME="@pythonPkg@/python"
+export PYTHONPATH="@pythonPkg@/python/dist-packages:@enginePkg@/dist-packages"
+export LD_LIBRARY_PATH="@libs@/lib:@enginePkg@/dist-packages/torch/lib:@enginePkg@/dist-packages/tensorrt_llm/libs''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export PATH="$SCRIPT_DIR:@pythonPkg@/python/bin''${PATH:+:$PATH}"
+export OPAL_PREFIX="$PKG_DIR/hpcx/ompi"
+export CUDA_HOME="$PKG_DIR/cuda"
+exec "@pythonPkg@/python/bin/python3.12" -c "
+from tensorrt_llm.commands.prune import main
+import sys; sys.exit(main())
+" "$@"
+TRTLLM_WRAPPER_EOF
+    chmod +x $out/bin/trtllm-prune
+
+    cat > $out/bin/trtllm-refit << 'TRTLLM_WRAPPER_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+PKG_DIR="$(dirname "$SCRIPT_DIR")"
+export PYTHONHOME="@pythonPkg@/python"
+export PYTHONPATH="@pythonPkg@/python/dist-packages:@enginePkg@/dist-packages"
+export LD_LIBRARY_PATH="@libs@/lib:@enginePkg@/dist-packages/torch/lib:@enginePkg@/dist-packages/tensorrt_llm/libs''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export PATH="$SCRIPT_DIR:@pythonPkg@/python/bin''${PATH:+:$PATH}"
+export OPAL_PREFIX="$PKG_DIR/hpcx/ompi"
+export CUDA_HOME="$PKG_DIR/cuda"
+exec "@pythonPkg@/python/bin/python3.12" -c "
+from tensorrt_llm.commands.refit import main
+import sys; sys.exit(main())
+" "$@"
+TRTLLM_WRAPPER_EOF
+    chmod +x $out/bin/trtllm-refit
+
+    cat > $out/bin/trtllm-serve << 'TRTLLM_WRAPPER_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+PKG_DIR="$(dirname "$SCRIPT_DIR")"
+export PYTHONHOME="@pythonPkg@/python"
+export PYTHONPATH="@pythonPkg@/python/dist-packages:@enginePkg@/dist-packages"
+export LD_LIBRARY_PATH="@libs@/lib:@enginePkg@/dist-packages/torch/lib:@enginePkg@/dist-packages/tensorrt_llm/libs''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export PATH="$SCRIPT_DIR:@pythonPkg@/python/bin''${PATH:+:$PATH}"
+export OPAL_PREFIX="$PKG_DIR/hpcx/ompi"
+export CUDA_HOME="$PKG_DIR/cuda"
+exec "@pythonPkg@/python/bin/python3.12" -c "
+from tensorrt_llm.commands.serve import main
+import sys; sys.exit(main())
+" "$@"
+TRTLLM_WRAPPER_EOF
+    chmod +x $out/bin/trtllm-serve
+
+    # -- trtexec wrapper --
+    cat > $out/bin/trtexec << 'TRTLLM_WRAPPER_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+export LD_LIBRARY_PATH="@libs@/lib:@enginePkg@/dist-packages/torch/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+exec "$SCRIPT_DIR/.trtexec.real" "$@"
+TRTLLM_WRAPPER_EOF
+    chmod +x $out/bin/trtexec
+
+    # -- trtllm-llmapi-launch --
+    # Copy from tarball, then patch environment block to use store paths
+    cp bin/trtllm-llmapi-launch $out/bin/
+    chmod +w $out/bin/trtllm-llmapi-launch
+
+    # -- Replace placeholder tokens with Nix store paths --
+    # The heredoc wrappers use @token@ placeholders that Nix can't interpolate
+    # inside single-quoted heredocs.  substituteInPlace resolves them.
+    for f in $out/bin/trtllm-build $out/bin/trtllm-bench $out/bin/trtllm-eval \
+             $out/bin/trtllm-prune $out/bin/trtllm-refit $out/bin/trtllm-serve; do
+      substituteInPlace "$f" \
+        --replace-fail '@pythonPkg@' '${pythonPkg}' \
+        --replace-fail '@enginePkg@' '${enginePkg}' \
+        --replace-fail '@libs@' '${libs}'
+    done
+
+    # trtexec only needs libs and engine (no Python)
+    substituteInPlace $out/bin/trtexec \
+      --replace-fail '@enginePkg@' '${enginePkg}' \
+      --replace-fail '@libs@' '${libs}'
+
+    # Patch trtllm-llmapi-launch environment block (replace BUNDLE_DIR references)
+    substituteInPlace $out/bin/trtllm-llmapi-launch \
+      --replace-fail 'BUNDLE_DIR="$(dirname "$SCRIPT_DIR")"' \
+                     'PKG_DIR="$(dirname "$SCRIPT_DIR")"' \
+      --replace-fail 'PYTHONHOME="$BUNDLE_DIR/python"' \
+                     'PYTHONHOME="${pythonPkg}/python"' \
+      --replace-fail 'PYTHONPATH="$BUNDLE_DIR/python/dist-packages"' \
+                     'PYTHONPATH="${pythonPkg}/python/dist-packages:${enginePkg}/dist-packages"' \
+      --replace-fail 'LD_LIBRARY_PATH="$BUNDLE_DIR/lib:$BUNDLE_DIR/python/dist-packages/torch/lib:$BUNDLE_DIR/python/dist-packages/tensorrt_llm/libs' \
+                     'LD_LIBRARY_PATH="${libs}/lib:${enginePkg}/dist-packages/torch/lib:${enginePkg}/dist-packages/tensorrt_llm/libs' \
+      --replace-fail 'PATH="$BUNDLE_DIR/bin:$BUNDLE_DIR/python/bin' \
+                     'PATH="$SCRIPT_DIR:${pythonPkg}/python/bin' \
+      --replace-fail '"$BUNDLE_DIR/hpcx/ompi"' \
+                     '"$PKG_DIR/hpcx/ompi"' \
+      --replace-fail '"$BUNDLE_DIR/cuda"' \
+                     '"$PKG_DIR/cuda"'
 
     # -- Version marker --
     mkdir -p $out/share/${pname}
@@ -136,81 +248,15 @@ in pkgs.stdenv.mkDerivation {
     runHook postInstall
   '';
 
-  # Patch RPATHs so binaries find bundled libs via $ORIGIN
   postFixup = ''
-    # ---- lib/*.so: self-relative ----
-    for f in $out/lib/*.so $out/lib/*.so.*; do
-      [ -L "$f" ] && continue
-      [ -f "$f" ] || continue
-      patchelf --set-rpath '$ORIGIN' "$f" 2>/dev/null || true
-    done
-
-    # ---- python/bin/python3.12 ----
-    patchelf --set-rpath '$ORIGIN/../../lib' \
-      $out/python/bin/python3.12 2>/dev/null || true
-
     # ---- bin/.trtexec.real ----
-    patchelf --set-rpath '$ORIGIN/../lib' \
+    patchelf --set-rpath '${libs}/lib' \
       $out/bin/.trtexec.real 2>/dev/null || true
 
     # ---- CUDA compiler tools ----
     for f in $out/bin/cuda/*; do
       [ -f "$f" ] || continue
-      patchelf --set-rpath '$ORIGIN/../../lib' "$f" 2>/dev/null || true
-    done
-
-    # ---- python/lib/python3.12/lib-dynload/*.so ----
-    for f in $out/python/lib/python3.12/lib-dynload/*.so; do
-      [ -f "$f" ] || continue
-      patchelf --set-rpath '$ORIGIN/../../../../lib' "$f" 2>/dev/null || true
-    done
-
-    # ---- tensorrt_llm/libs/*.so ----
-    for f in $out/python/dist-packages/tensorrt_llm/libs/*.so; do
-      [ -f "$f" ] || continue
-      patchelf --set-rpath '$ORIGIN:$ORIGIN/../../../../../lib' "$f" 2>/dev/null || true
-    done
-    # tensorrt_llm/libs/nixl/*.so
-    for f in $out/python/dist-packages/tensorrt_llm/libs/nixl/*.so \
-             $out/python/dist-packages/tensorrt_llm/libs/nixl/plugins/*.so; do
-      [ -f "$f" ] || continue
-      patchelf --set-rpath '$ORIGIN:$ORIGIN/../../../../../../lib' "$f" 2>/dev/null || true
-    done
-
-    # ---- torch/lib/*.so ----
-    for f in $out/python/dist-packages/torch/lib/*.so*; do
-      [ -L "$f" ] && continue
-      [ -f "$f" ] || continue
-      patchelf --set-rpath '$ORIGIN:$ORIGIN/../../../../../lib' "$f" 2>/dev/null || true
-    done
-
-    # ---- tensorrt/tensorrt.so ----
-    if [ -f "$out/python/dist-packages/tensorrt/tensorrt.so" ]; then
-      patchelf --set-rpath '$ORIGIN:$ORIGIN/../../../../lib' \
-        "$out/python/dist-packages/tensorrt/tensorrt.so" 2>/dev/null || true
-    fi
-
-    # ---- flash_attn *.so ----
-    find $out/python/dist-packages/flash_attn -name '*.so' 2>/dev/null | while read f; do
-      patchelf --set-rpath '$ORIGIN:$ORIGIN/../../../../../lib' "$f" 2>/dev/null || true
-    done
-
-    # ---- triton *.so ----
-    find $out/python/dist-packages/triton -name '*.so' 2>/dev/null | while read f; do
-      patchelf --set-rpath '$ORIGIN:$ORIGIN/../../../../../lib' "$f" 2>/dev/null || true
-    done
-
-    # ---- pydantic_core *.so ----
-    for f in $out/python/dist-packages/pydantic_core/*.so; do
-      [ -f "$f" ] || continue
-      patchelf --set-rpath '$ORIGIN:$ORIGIN/../../../../lib' "$f" 2>/dev/null || true
-    done
-
-    # ---- scipy.libs *.so ----
-    for f in $out/python/dist-packages/scipy.libs/*.so*; do
-      [ -L "$f" ] && continue
-      [ -f "$f" ] || continue
-      patchelf --set-rpath '$ORIGIN:$ORIGIN/../../../../lib' "$f" 2>/dev/null || true
+      patchelf --set-rpath '${libs}/lib' "$f" 2>/dev/null || true
     done
 
     # ---- hpcx/ompi libraries ----
