@@ -1,6 +1,6 @@
 # Triton Inference Server - Nix Build
 
-Build NVIDIA Triton Inference Server v2.66.0 and its backends (Python, ONNX Runtime, TensorRT) from source using Flox/Nix, plus TensorRT-LLM via NGC container extraction.
+Build NVIDIA Triton Inference Server v2.66.0 and its backends (Python, ONNX Runtime, TensorRT) from source using Flox/Nix, plus TensorRT-LLM backend and TRT-LLM model conversion tools via NGC container extraction.
 
 ## Prerequisites
 
@@ -28,12 +28,21 @@ flox build triton-tensorrt-backend                # ~2 min
 
 git add .flox/pkgs/triton-tensorrtllm-backend.nix
 flox build triton-tensorrtllm-backend             # fast, pre-built bundle
+
+git add .flox/pkgs/trtllm-tools-parts.nix .flox/pkgs/trtllm-tools-libs-cuda.nix \
+       .flox/pkgs/trtllm-tools-libs-ml.nix .flox/pkgs/trtllm-tools-python.nix \
+       .flox/pkgs/trtllm-tools-engine.nix .flox/pkgs/trtllm-tools.nix
+flox build trtllm-tools-libs-cuda                 # fast, pre-built bundle
+flox build trtllm-tools-libs-ml                   # fast, pre-built bundle
+flox build trtllm-tools-python                    # fast, pre-built bundle
+flox build trtllm-tools-engine                    # fast, pre-built bundle
+flox build trtllm-tools                           # fast, wrapper scripts only
 ```
 
 Build output appears at `./result-triton-server/`, `./result-triton-python-backend/`,
 `./result-onnxruntime-cuda/`, `./result-triton-onnxruntime-backend/`,
-`./result-tensorrt-cuda/`, `./result-triton-tensorrt-backend/`, and
-`./result-triton-tensorrtllm-backend/`.
+`./result-tensorrt-cuda/`, `./result-triton-tensorrt-backend/`,
+`./result-triton-tensorrtllm-backend/`, and `./result-trtllm-tools/`.
 
 ## Build Output
 
@@ -116,6 +125,34 @@ result-triton-tensorrtllm-backend/
     libtensorrt_llm.so                 # TRT-LLM runtime + 40+ bundled libs (3.9 GB total)
     libnvinfer_plugin_tensorrt_llm.so
     libnccl.so.2, libmpi.so.40, libcudart.so.13, libcublas.so.13, ...
+```
+
+The trtllm-tools output is split across 5 sub-packages (see
+[TRT-LLM Model Conversion Tools](#trt-llm-model-conversion-tools)):
+
+| Sub-package | Size | Contents |
+|-------------|------|----------|
+| `trtllm-tools-libs-cuda` | 2.9 GB | CUDA 13, cuDNN 9.14, NCCL, OpenMPI, misc native `.so` |
+| `trtllm-tools-libs-ml` | 3.5 GB | TensorRT 10.13, MKL, TBB |
+| `trtllm-tools-python` | 4.4 GB | Python 3.12 interpreter + stdlib + ~290 dist-packages |
+| `trtllm-tools-engine` | 4.2 GB | PyTorch 2.9.0a0 + tensorrt_llm 1.1.0 + torchvision |
+| `trtllm-tools` (wrapper) | 244 MB | Wrapper scripts + trtexec + `cuda/` + `hpcx/ompi/` |
+
+```
+result-trtllm-tools/
+  bin/
+    trtllm-build              # HuggingFace → TRT-LLM engine conversion
+    trtllm-bench              # Benchmarking
+    trtllm-eval               # Evaluation
+    trtllm-prune              # Model pruning
+    trtllm-refit              # Engine refitting
+    trtllm-serve              # TRT-LLM serving (standalone)
+    trtllm-llmapi-launch      # LLM API launcher
+    trtexec                   # TensorRT engine builder/profiler
+    cuda/                     # CUDA compiler tools (nvcc, ptxas, etc.)
+  cuda/                       # CUDA_HOME structure (bin, nvvm, lib64 symlinks)
+  hpcx/ompi/                  # OpenMPI prefix (OPAL_PREFIX)
+  share/trtllm-tools/         # Build version marker
 ```
 
 ## Usage
@@ -205,7 +242,7 @@ Newer GPUs (Blackwell sm_100+) work via PTX JIT compilation.
 
 ## Build Versioning
 
-Each publishable package embeds a version marker at
+Each of the 10 publishable packages embeds a version marker at
 `$out/share/<pname>/flox-build-version-<N>` containing the build number, git revision,
 and a changelog. This provides provenance tracking for every store path.
 
@@ -317,9 +354,61 @@ conflict. The container's `libnvinfer.so.10.13.3` also doesn't conflict with the
 backend's `10.14.1.48` (separate RPATHs).
 
 **Model conversion note:** Converting HuggingFace models to TRT-LLM engine format requires
-the `tensorrt_llm` Python package, which is only available inside the NGC container (not
-pip-installable on Python 3.13). Serving TRT-LLM engines is handled by this backend;
-conversion is a separate concern requiring a dedicated Python 3.12 environment.
+the `tensorrt_llm` Python package. The `trtllm-tools` package (below) provides a
+self-contained Python 3.12 environment for this. Serving TRT-LLM engines is handled by
+this backend; conversion is a separate concern.
+
+## TRT-LLM Model Conversion Tools
+
+The `trtllm-tools` package provides a standalone Python 3.12 environment for converting
+HuggingFace models to TRT-LLM engine format. Like the TRT-LLM backend, these tools are
+extracted from the NGC container — not built from source.
+
+**Why a separate package?** The runtime environment uses Python 3.13, but TensorRT-LLM's
+conversion tools require Python 3.12 with a custom NVIDIA PyTorch build. The tools package
+is consumed by a separate Flox environment
+([triton-trtllm-tools](../../triton-trtllm-tools/)), not the triton-runtime environment.
+
+### 5-Way Split Architecture
+
+Each sub-package must stay under the 5 GB Flox catalog NAR upload limit. The wrapper
+package references the four sub-packages by Nix store path via `@placeholder@` tokens
+that are substituted during the build.
+
+| Sub-package | Nix expression | Size | Contents |
+|-------------|----------------|------|----------|
+| `trtllm-tools-libs-cuda` | `trtllm-tools-libs-cuda.nix` | 2.9 GB | CUDA 13, cuDNN 9.14, NCCL, OpenMPI, misc native `.so` |
+| `trtllm-tools-libs-ml` | `trtllm-tools-libs-ml.nix` | 3.5 GB | TensorRT 10.13, MKL, TBB |
+| `trtllm-tools-python` | `trtllm-tools-python.nix` | 4.4 GB | Python 3.12 interpreter + stdlib + ~290 dist-packages (excluding torch/tensorrt_llm) |
+| `trtllm-tools-engine` | `trtllm-tools-engine.nix` | 4.2 GB | PyTorch 2.9.0a0 + tensorrt_llm 1.1.0 + torchvision |
+| `trtllm-tools` | `trtllm-tools.nix` | 244 MB | Wrapper scripts + trtexec + `cuda/` + `hpcx/ompi/` |
+
+All five packages share the same `fetchurl` definitions via `trtllm-tools-parts.nix`,
+ensuring the ~8.2 GB compressed source bundle (split into 5 tarball parts on GitHub
+Release [v26.02-tools](https://github.com/barstoolbluz/build-triton-server/releases/tag/v26.02-tools))
+is downloaded and cached once.
+
+### Available Tools
+
+- `trtllm-build` — HuggingFace → TRT-LLM engine conversion
+- `trtllm-bench` — Benchmarking
+- `trtllm-eval` — Evaluation
+- `trtllm-prune` — Model pruning
+- `trtllm-refit` — Engine refitting
+- `trtllm-serve` — TRT-LLM serving (standalone)
+- `trtllm-llmapi-launch` — LLM API launcher
+- `trtexec` — TensorRT engine builder/profiler
+
+### Technical Notes
+
+- **`@placeholder@` pattern**: Wrapper scripts use `@libs_cuda@`, `@libs_ml@`, etc. as
+  tokens, replaced by `substituteInPlace` with Nix store paths during the build. This
+  avoids Nix's `''${` escaping issues in heredoc-heavy shell scripts.
+- **DT_RPATH → DT_RUNPATH**: Some `.so` files in the NGC container use `DT_RPATH` which
+  takes precedence over `LD_LIBRARY_PATH`. The build patches these to `DT_RUNPATH` so the
+  wrapper's `LD_LIBRARY_PATH` works correctly.
+- **nullglob gotcha**: The wrapper scripts set `shopt -s nullglob` to handle globs that
+  expand to nothing — Nix's bash environment doesn't set this by default.
 
 ## Nix Build Parallelism
 
@@ -353,6 +442,12 @@ For the TRT-LLM backend (`triton-tensorrtllm-backend.nix`), extract a new bundle
 corresponding NGC container for the new Triton release, re-upload to GitHub Releases, and
 update the `fetchurl` hash.
 
+For the TRT-LLM tools (`trtllm-tools*.nix`), extract a new tools bundle from the same NGC
+container, split into parts for GitHub Releases (`split -b 2000000000`), upload as a new
+release tag (e.g., `v26.XX-tools`), and update all `fetchurl` hashes in
+`trtllm-tools-parts.nix`. All five sub-packages share the same tarball parts, so only one
+set of hashes needs updating.
+
 See `CLAUDE.md` for detailed notes on every sandbox challenge encountered.
 
 ## Backends Not Built Here
@@ -377,12 +472,15 @@ onnxruntime-cuda:           /nix/store/3hys619h5k6bdsp6c2jf2r378q63h354-onnxrunt
 triton-onnxruntime-backend: /nix/store/x7wsykzn8xrwn1vrf6a7h6k1193i5jcd-triton-onnxruntime-backend-2.66.0
 triton-tensorrt-backend:    /nix/store/alb9fcxjq0pckb2c6dq8k5994yb5gj88-triton-tensorrt-backend-2.66.0
 triton-tensorrtllm-backend: /nix/store/bgfpnsx7fpmhc3vm55n9aiqzyajl5riy-triton-tensorrtllm-backend-2.66.0
+trtllm-tools-libs-cuda:     /nix/store/bi9nmrmqpapwgz97m13q3hz39lgg77hj-trtllm-tools-libs-cuda-2.66.0
+trtllm-tools-libs-ml:       /nix/store/jz4hiz38vnly47dw2fkfmaw4ygpsiw74-trtllm-tools-libs-ml-2.66.0
+trtllm-tools-python:        /nix/store/02h0m6qc5yqk3bdpghy5jhfl29z5rjfm-trtllm-tools-python-2.66.0
+trtllm-tools-engine:        /nix/store/3bl0l898dlinqnksgq6c22h1p8pq9hcw-trtllm-tools-engine-2.66.0
+trtllm-tools:               /nix/store/03xgka0z5ikhhi0rvny9rl2qqi8pc9j7-trtllm-tools-2.66.0
 ```
 
-Published packages (triton-server, triton-python-backend, triton-onnxruntime-backend,
-triton-tensorrt-backend) are available from the meetrlyio catalog via `pkg-path`
-references. The triton-tensorrtllm-backend is pending publish. The `store-path`
-references above are for debugging and direct testing only.
+All packages are published to the `flox` Flox catalog via `pkg-path` references.
+The `store-path` references above are for debugging and direct testing only.
 
 ## License
 
