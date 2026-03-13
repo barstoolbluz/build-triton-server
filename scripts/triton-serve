@@ -723,6 +723,11 @@ fi
 
 if lib::is_truthy "$TRITON_OPENAI_FRONTEND"; then
   _launch_mode="openai"
+  # main.py imports from engine/ and frontend/ which live under openai_frontend/
+  _openai_pkg_dir="$(dirname "$TRITON_OPENAI_MAIN")/openai_frontend"
+  if [[ -d "$_openai_pkg_dir" ]]; then
+    export PYTHONPATH="${_openai_pkg_dir}${PYTHONPATH:+:$PYTHONPATH}"
+  fi
   cmd=(
     python3 "$TRITON_OPENAI_MAIN"
     --model-repository="$TRITON_MODEL_REPOSITORY"
