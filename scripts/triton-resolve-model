@@ -26,6 +26,7 @@
 #   TRITON_MODEL_BACKEND      Expected backend hint (tensorrt, onnx, pytorch, tensorflow, python, vllm)
 #   TRITON_MODEL_ENV_FILE     Override env file path
 #   TRITON_MODEL_STATE_DIR    Override state directory for env/lock/provenance files
+#                             (default: $FLOX_ENV_CACHE or ${XDG_CACHE_HOME:-$HOME/.cache}/triton-resolve)
 #   TRITON_RESOLVE_LOCK_TIMEOUT      Lock wait seconds (default: 300)
 #   TRITON_RESOLVE_NETWORK_RETRIES   Network retries per operation (default: 3)
 #   TRITON_RESOLVE_NETWORK_TIMEOUT   Per-attempt timeout seconds (default: 900)
@@ -93,6 +94,7 @@ ARTIFACTS = {
     "tensorflow": [("model.savedmodel", True)],
     "python": [("model.py", False)],
     "vllm": [("model.json", False)],
+    "tensorrtllm": [],  # engine loaded via gpt_model_path, not version dir
 }
 
 PLATFORM_TO_BACKEND = {
@@ -281,11 +283,20 @@ def validate():
         if err:
             return fail(result, err)
         if not backends:
+            # tensorrtllm uses external engine (gpt_model_path); version dirs are empty
+            effective_hint = backend_hint or cfg_backend
+            if effective_hint == "tensorrtllm":
+                per_version[str(v)] = []
+                continue
             if backend_hint:
                 return fail(result, f"Version {v}/ has no artifact for backend '{backend_hint}'")
             return fail(result, f"Version {v}/ has no recognized model artifact")
         per_version[str(v)] = backends
         all_backends.update(backends)
+
+    # For backends with no version-dir artifacts (e.g. tensorrtllm), fall back to config
+    if not all_backends and cfg_backend:
+        all_backends.add(cfg_backend)
 
     if len(all_backends) != 1:
         return fail(result, f"Mixed backends across versions are not allowed: {', '.join(sorted(all_backends))}")
@@ -871,13 +882,8 @@ _maybe_init_timeout_prefix
 _safe_ensure_dir "$TRITON_MODEL_REPOSITORY"
 
 _target_dir="$TRITON_MODEL_REPOSITORY/$TRITON_MODEL"
-_publish_root_base="$TRITON_MODEL_REPOSITORY/.published"
-_published_model_root="$_publish_root_base/$TRITON_MODEL"
-if [[ "$TRITON_PUBLISH_STRATEGY" == "symlink-store" ]]; then
-  _safe_ensure_dir "$_publish_root_base"
-  _safe_ensure_dir "$_published_model_root"
-fi
 
+# --- Model identity ---
 _model_id=""
 if [[ -n "$TRITON_MODEL_ID" ]]; then
   _model_id="$TRITON_MODEL_ID"
@@ -888,17 +894,27 @@ fi
 _model_slug="$(lib::slugify_nonempty "${_model_id:-$TRITON_MODEL}")"
 _target_hash="$(lib::sha256_12 "$TRITON_MODEL_REPOSITORY/$TRITON_MODEL")"
 
+# --- Resolve state directory FIRST (before .published/.staging) ---
 if [[ -z "$TRITON_MODEL_STATE_DIR" ]]; then
   if [[ -n "$TRITON_MODEL_ENV_FILE" ]]; then
     TRITON_MODEL_STATE_DIR="$(dirname -- "$TRITON_MODEL_ENV_FILE")"
   elif [[ -n "${FLOX_ENV_CACHE:-}" ]]; then
     TRITON_MODEL_STATE_DIR="$FLOX_ENV_CACHE"
   else
-    TRITON_MODEL_STATE_DIR="$TRITON_MODEL_REPOSITORY/.triton-resolve-state"
+    TRITON_MODEL_STATE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/triton-resolve"
   fi
 fi
 _safe_ensure_dir "$TRITON_MODEL_STATE_DIR"
 
+# --- Published store + staging under state dir, NOT model repo ---
+_publish_root_base="$TRITON_MODEL_STATE_DIR/.published"
+_published_model_root="$_publish_root_base/$TRITON_MODEL"
+if [[ "$TRITON_PUBLISH_STRATEGY" == "symlink-store" ]]; then
+  _safe_ensure_dir "$_publish_root_base"
+  _safe_ensure_dir "$_published_model_root"
+fi
+
+# --- Env / lock / provenance ---
 if [[ -z "$TRITON_MODEL_ENV_FILE" ]]; then
   TRITON_MODEL_ENV_FILE="$TRITON_MODEL_STATE_DIR/triton-model.${_model_slug}.${_target_hash}.env"
 fi
@@ -927,7 +943,8 @@ _PROV_LOCAL_MANIFEST_SHA=""
 _source_errors=""
 _add_error() { _source_errors+="  $1"$'\n'; }
 
-_stage_base="$TRITON_MODEL_REPOSITORY/.staging"
+# --- Staging under state dir, NOT model repo ---
+_stage_base="$TRITON_MODEL_STATE_DIR/.staging"
 _safe_ensure_dir "$_stage_base"
 
 _logfiles=()

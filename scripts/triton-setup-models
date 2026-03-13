@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# triton-setup-models — Assemble model repository at activation time.
+#
+# Called from the Flox on-activate hook. Builds a unified model directory
+# under $FLOX_ENV_CACHE/models/ by combining:
+#
+#   Tier 1: Package-provided models from $FLOX_ENV/share/models/
+#           (each subdirectory is one model)
+#
+#   Tier 2: Repo-local models from $FLOX_ENV_PROJECT/models/
+#           (real dirs only, assembled with symlinks)
+#
+# Tier 1 wins on name collision (same precedence as triton-setup-backends).
+#
+# For models with config.pbtxt.template, @TOKEN@ placeholders are expanded
+# to runtime paths and the result is written as config.pbtxt.
+
+set -euo pipefail
+
+# Resolve _lib.sh relative to this script's installed location.
+_self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=_lib.sh
+source "${_self_dir}/_lib.sh"
+
+lib::require_var FLOX_ENV
+lib::require_var FLOX_ENV_CACHE
+
+FLOX_ENV_PROJECT="${FLOX_ENV_PROJECT:-}"
+TRITON_BACKEND_DIR="${TRITON_BACKEND_DIR:-}"
+
+readonly CACHE_MODELS="${FLOX_ENV_CACHE}/models"
+readonly ENV_MODELS="${FLOX_ENV}/share/models"
+readonly PROJECT_MODELS="${FLOX_ENV_PROJECT:+${FLOX_ENV_PROJECT}/models}"
+
+# ── helpers ──────────────────────────────────────────────────────────
+
+_expand_template() {
+  # Expand @TOKEN@ placeholders in a config.pbtxt.template, write config.pbtxt.
+  local template="$1"
+  local output="$2"
+  local model_cache_dir="$3"
+
+  # Resolve executor worker path
+  local executor_worker=""
+  if [[ -n "$TRITON_BACKEND_DIR" ]]; then
+    executor_worker="${TRITON_BACKEND_DIR}/tensorrtllm/trtllmExecutorWorker"
+    if [[ ! -e "$executor_worker" ]]; then
+      lib::warn "triton-setup-models: executor worker not found: ${executor_worker}"
+    fi
+  else
+    lib::warn "triton-setup-models: TRITON_BACKEND_DIR is unset; @EXECUTOR_WORKER_PATH@ will be empty"
+  fi
+
+  # Resolve engine path (follow symlinks to get real path)
+  local gpt_model_path=""
+  if [[ -e "${model_cache_dir}/engine" ]]; then
+    gpt_model_path="$(readlink -f "${model_cache_dir}/engine")"
+  fi
+
+  # Resolve tokenizer path
+  local tokenizer_dir=""
+  if [[ -e "${model_cache_dir}/tokenizer" ]]; then
+    tokenizer_dir="$(readlink -f "${model_cache_dir}/tokenizer")"
+  fi
+
+  # Expand tokens using sed with | delimiter (paths contain / but not |)
+  sed \
+    -e "s|@EXECUTOR_WORKER_PATH@|${executor_worker}|g" \
+    -e "s|@GPT_MODEL_PATH@|${gpt_model_path}|g" \
+    -e "s|@TOKENIZER_DIR@|${tokenizer_dir}|g" \
+    "$template" > "$output"
+
+  # Warn about any remaining unexpanded tokens
+  local remaining
+  remaining="$(grep -oE '@[A-Z_]+@' "$output" 2>/dev/null || true)"
+  if [[ -n "$remaining" ]]; then
+    lib::warn "triton-setup-models: unexpanded tokens in ${output}: ${remaining}"
+  fi
+}
+
+_assemble_model() {
+  # Assemble a single model directory into the cache.
+  local src="${1%/}"
+  local name="$2"
+  local dst="${CACHE_MODELS}/${name}"
+
+  mkdir -p "$dst"
+
+  # Symlink all subdirectories (version dirs, engine/, tokenizer/, etc.)
+  for entry in "${src}"/*/; do
+    [[ -d "$entry" ]] || continue
+    local subname
+    subname="$(basename "$entry")"
+    ln -sf "$entry" "${dst}/${subname}"
+  done
+
+  # Handle config.pbtxt.template → config.pbtxt expansion
+  if [[ -f "${src}/config.pbtxt.template" ]]; then
+    _expand_template "${src}/config.pbtxt.template" "${dst}/config.pbtxt" "$dst"
+    lib::verbose "  expanded: ${name}/config.pbtxt.template -> config.pbtxt"
+  elif [[ -f "${src}/config.pbtxt" ]]; then
+    ln -sf "${src}/config.pbtxt" "${dst}/config.pbtxt"
+  fi
+
+  # Symlink remaining top-level files (skip template and config already handled)
+  for entry in "${src}"/*; do
+    [[ -e "$entry" || -L "$entry" ]] || continue
+    [[ -f "$entry" ]] || continue
+    local fname
+    fname="$(basename "$entry")"
+    [[ "$fname" != "config.pbtxt.template" ]] || continue
+    [[ "$fname" != "config.pbtxt" ]] || continue
+    # Don't overwrite an already-generated config.pbtxt
+    [[ ! -e "${dst}/${fname}" ]] || continue
+    ln -sf "$entry" "${dst}/${fname}"
+  done
+}
+
+# ── main ─────────────────────────────────────────────────────────────
+
+lib::log "triton-setup-models: assembling ${CACHE_MODELS}"
+
+# Idempotent: wipe and recreate the cache models dir.
+rm -rf "$CACHE_MODELS"
+mkdir -p "$CACHE_MODELS"
+
+# Track which model names were handled by Tier 1.
+declare -A tier1_names=()
+
+# ── Tier 1: package-provided models ──────────────────────────────────
+if [[ -d "$ENV_MODELS" ]]; then
+  for entry in "${ENV_MODELS}"/*/; do
+    [[ -d "$entry" ]] || continue
+    name="$(basename "$entry")"
+    _assemble_model "$entry" "$name"
+    tier1_names["$name"]=1
+    lib::verbose "  tier1: ${name}"
+  done
+fi
+
+# ── Tier 2: repo-local models ───────────────────────────────────────
+if [[ -n "$PROJECT_MODELS" && -d "$PROJECT_MODELS" ]]; then
+  for entry in "${PROJECT_MODELS}"/*/; do
+    [[ -d "$entry" ]] || continue
+    # Only handle real directories (not symlinks).
+    [[ ! -L "${entry%/}" ]] || continue
+    name="$(basename "$entry")"
+
+    # Skip if Tier 1 already owns this name.
+    [[ -z "${tier1_names[$name]+x}" ]] || continue
+
+    _assemble_model "$entry" "$name"
+    lib::verbose "  tier2: ${name}"
+  done
+fi
+
+lib::log "triton-setup-models: done"

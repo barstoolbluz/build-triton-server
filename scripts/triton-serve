@@ -218,7 +218,7 @@ _resolve_model_env_file() {
   [[ -n "${TRITON_MODEL_REPOSITORY:-}" ]] \
     || lib::die "Cannot derive env file path: TRITON_MODEL_REPOSITORY is required when TRITON_MODEL_ENV_FILE is not set"
 
-  # Resolve state dir — same fallback chain as triton-resolve-model (lines 891-898),
+  # Resolve state dir — same fallback chain as triton-resolve-model,
   # minus the dirname(TRITON_MODEL_ENV_FILE) branch (unreachable: we short-circuited above).
   local state_dir=""
   if [[ -n "${TRITON_MODEL_STATE_DIR:-}" ]]; then
@@ -226,7 +226,7 @@ _resolve_model_env_file() {
   elif [[ -n "${FLOX_ENV_CACHE:-}" ]]; then
     state_dir="$FLOX_ENV_CACHE"
   else
-    state_dir="$TRITON_MODEL_REPOSITORY/.triton-resolve-state"
+    state_dir="${XDG_CACHE_HOME:-$HOME/.cache}/triton-resolve"
   fi
   [[ -d "$state_dir" ]] \
     || lib::die "State directory does not exist: $state_dir (run triton-resolve-model first)"

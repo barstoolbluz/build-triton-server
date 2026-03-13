@@ -7,6 +7,7 @@
 # The bundle contains:
 #   backends/tensorrtllm/  - libtriton_tensorrtllm.so + trtllmExecutorWorker
 #   lib/                   - TRT-LLM runtime libs, CUDA 13.x libs, NCCL, OpenMPI
+#   hpcx/                  - HPC-X OpenMPI prefix (help files, MCA modules, config)
 #
 # RPATHs are patched so binaries find their deps via $ORIGIN/../lib.
 # CUDA 13.x libs from the container coexist with the system's CUDA 12.x libs
@@ -61,6 +62,11 @@ in pkgs.stdenv.mkDerivation {
     mkdir -p $out/lib
     cp -P lib/*.so lib/*.so.* $out/lib/
 
+    # -- HPC-X OpenMPI prefix (MPI runtime: help files, MCA modules) --
+    if [ -d hpcx ]; then
+      cp -a hpcx $out/
+    fi
+
     # -- Version marker --
     mkdir -p $out/share/${pname}
     cat > $out/share/${pname}/flox-build-version-${toString buildVersion} <<'MARKER'
@@ -85,6 +91,13 @@ in pkgs.stdenv.mkDerivation {
       $out/backends/tensorrtllm/trtllmExecutorWorker
 
     for f in $out/lib/*.so $out/lib/*.so.*; do
+      [ -L "$f" ] && continue
+      [ -f "$f" ] || continue
+      patchelf --set-rpath '$ORIGIN' "$f" 2>/dev/null || true
+    done
+
+    # ---- hpcx/ompi libraries ----
+    find $out/hpcx -name '*.so' -o -name '*.so.*' 2>/dev/null | while read f; do
       [ -L "$f" ] && continue
       [ -f "$f" ] || continue
       patchelf --set-rpath '$ORIGIN' "$f" 2>/dev/null || true
