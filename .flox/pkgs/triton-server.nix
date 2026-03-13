@@ -381,6 +381,12 @@ set(CMAKE_CUDA_ARCHITECTURES "80;86;89;90" CACHE STRING "")'
     cp ${../../scripts/triton-setup-models} $out/bin/triton-setup-models
     chmod +x $out/bin/triton-{preflight,resolve-model,serve,setup-backends,setup-models}
 
+    # OpenAI-compatible frontend source
+    mkdir -p $out/python/openai
+    cp -r ${serverSrc}/python/openai/openai_frontend $out/python/openai/
+    cp ${serverSrc}/python/openai/openai_frontend/main.py $out/python/openai/
+    cp ${serverSrc}/python/openai/requirements.txt $out/python/openai/
+
     mkdir -p $out/share/${pname}
     cat > $out/share/${pname}/flox-build-version-${toString buildVersion} <<'MARKER'
 build-version: ${toString buildVersion}

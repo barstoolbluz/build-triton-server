@@ -1,7 +1,7 @@
 {
-  "build_version": 33,
+  "build_version": 36,
   "force_increment": 0,
-  "git_rev": "c279dda8038d78ab5d24092ed9da0a915f5226aa",
-  "git_rev_short": "c279dda",
-  "changelog": "Fix model-repo pollution: move .published/.staging/state out of TRITON_MODEL_REPOSITORY."
+  "git_rev": "7d618dca58bb0e235caa18ea95a5ff3f41916439",
+  "git_rev_short": "7d618dc",
+  "changelog": "Package OpenAI-compatible frontend (main.py + openai_frontend/ + requirements.txt) in triton-server output."
 }
