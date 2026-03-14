@@ -754,6 +754,20 @@ if lib::is_truthy "$TRITON_OPENAI_FRONTEND"; then
       _model_name="$_ensemble_name"
     fi
     cmd+=(--load-model="$_model_name")
+
+    # Also load sub-models that share the base name prefix (needed for BLS
+    # ensembles where Triton doesn't auto-resolve dependencies).
+    _base_name="$(basename "$_TRITON_RESOLVED_PATH")"
+    for _sub_dir in "$TRITON_MODEL_REPOSITORY/${_base_name}"_*/; do
+      [[ -d "$_sub_dir" ]] || continue
+      _sub_name="$(basename "$_sub_dir")"
+      [[ "$_sub_name" != "$_model_name" ]] || continue
+      cmd+=(--load-model="$_sub_name")
+    done
+    # Load the base model itself if ensemble was selected
+    if [[ "$_model_name" != "$_base_name" ]] && [[ -d "$TRITON_MODEL_REPOSITORY/$_base_name" ]]; then
+      cmd+=(--load-model="$_base_name")
+    fi
   fi
 
   if [[ -n "$TRITON_OPENAI_TOKENIZER" ]]; then
