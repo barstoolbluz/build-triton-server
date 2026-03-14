@@ -410,7 +410,7 @@ set(CMAKE_CUDA_ARCHITECTURES "80;86;89;90" CACHE STRING "")'
         'model_repository=args.model_repository,' \
         'model_repository=args.model_repository,
         **({"backend_directory": args.backend_directory} if args.backend_directory else {}),
-        **({"model_control_mode": tritonserver.ModelControlMode[args.model_control_mode.upper()]} if args.model_control_mode else {}),'
+        **({"model_control_mode": getattr(tritonserver.ModelControlMode, args.model_control_mode.upper())} if args.model_control_mode else {}),'
 
     mkdir -p $out/share/${pname}
     cat > $out/share/${pname}/flox-build-version-${toString buildVersion} <<'MARKER'
