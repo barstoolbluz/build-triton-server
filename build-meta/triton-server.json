@@ -1,7 +1,7 @@
 {
-  "build_version": 50,
+  "build_version": 51,
   "force_increment": 0,
-  "git_rev": "1f4bd1ee3df9d8a33691e14cec1672bc895d852b",
-  "git_rev_short": "1f4bd1e",
-  "changelog": "Skip unloaded models in OpenAI frontend engine metadata discovery."
+  "git_rev": "e572f56faf0a6b85cb07b19a7cee06c695e88261",
+  "git_rev_short": "e572f56",
+  "changelog": "Auto-detect ensemble model variant in triton-serve for OpenAI frontend."
 }
