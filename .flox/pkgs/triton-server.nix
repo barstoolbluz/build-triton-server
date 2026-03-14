@@ -387,6 +387,31 @@ set(CMAKE_CUDA_ARCHITECTURES "80;86;89;90" CACHE STRING "")'
     cp ${serverSrc}/python/openai/openai_frontend/main.py $out/python/openai/
     cp ${serverSrc}/python/openai/requirements.txt $out/python/openai/
 
+    # Patch main.py: add --backend-directory and --model-control-mode args
+    chmod +w $out/python/openai/main.py
+    substituteInPlace $out/python/openai/main.py \
+      --replace-fail \
+        '        "--default-max-tokens",' \
+        '        "--backend-directory",
+        type=str,
+        default=None,
+        help="Path to the Triton backend directory",
+    )
+    triton_group.add_argument(
+        "--model-control-mode",
+        type=str,
+        default=None,
+        choices=["none", "explicit", "poll"],
+        help="Triton model control mode (default: none)",
+    )
+    triton_group.add_argument(
+        "--default-max-tokens",' \
+      --replace-fail \
+        'model_repository=args.model_repository,' \
+        'model_repository=args.model_repository,
+        **({"backend_directory": args.backend_directory} if args.backend_directory else {}),
+        **({"model_control_mode": tritonserver.ModelControlMode[args.model_control_mode.upper()]} if args.model_control_mode else {}),'
+
     mkdir -p $out/share/${pname}
     cat > $out/share/${pname}/flox-build-version-${toString buildVersion} <<'MARKER'
 build-version: ${toString buildVersion}

@@ -735,6 +735,12 @@ if lib::is_truthy "$TRITON_OPENAI_FRONTEND"; then
     --host="$TRITON_HOST"
   )
 
+  if [[ -n "$TRITON_BACKEND_DIR" ]]; then
+    cmd+=(--backend-directory="$TRITON_BACKEND_DIR")
+  fi
+
+  cmd+=(--model-control-mode="$TRITON_MODEL_CONTROL_MODE")
+
   if [[ -n "$TRITON_OPENAI_TOKENIZER" ]]; then
     cmd+=(--tokenizer="$TRITON_OPENAI_TOKENIZER")
   fi
