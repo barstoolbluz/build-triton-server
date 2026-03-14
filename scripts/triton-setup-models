@@ -159,6 +159,9 @@ _synthesize_trtllm_ensemble() {
     lib::verbose "  synthesized: ${name}/config.pbtxt"
   fi
 
+  # Ensure the raw model has a version directory (Triton requires at least 1/)
+  mkdir -p "${raw_dir}/1"
+
   # Resolve the tokenizer path from the raw model (needed for sibling dirs)
   local tokenizer_dir=""
   if [[ -e "${raw_dir}/tokenizer" ]]; then
