@@ -1,7 +1,7 @@
 {
-  "build_version": 44,
+  "build_version": 46,
   "force_increment": 0,
-  "git_rev": "5c7eed9732f34065f2c7d77b8347d101c2518346",
-  "git_rev_short": "5c7eed9",
-  "changelog": "Fix ModelControlMode pybind11 enum access in OpenAI frontend."
+  "git_rev": "d68509754a682727cf939b2fe1068611c20da93e",
+  "git_rev_short": "d685097",
+  "changelog": "Add --load-model to OpenAI frontend; auto-promote to explicit mode when TRITON_MODEL is set."
 }
